@@ -29,6 +29,8 @@
   <label><input id="rej" type="checkbox" checked> show rejected</label>
   <label><input id="compact" type="checkbox" checked> compact text</label>
   <label><input id="axes" type="checkbox" checked> axes</label>
+  <label>Camera <select id="camres"><option value="640x480">640x480</option><option value="1280x720" selected>1280x720</option><option value="1920x1080">1920x1080</option></select></label>
+  <label>Process width <select id="procw"><option>320</option><option>480</option><option selected>640</option><option>960</option><option>1280</option></select></label>
   <button id="flip">Switch camera</button>
 </div>
 <div id="start"><div>AprilTag family tag16h5</div><button id="go">Start camera</button><div id="err" style="color:#f88;max-width:80%"></div></div>
@@ -37,7 +39,6 @@
 <script>
 const $ = id => document.getElementById(id);
 const video = $('cam'), canvas = $('out'), ctx = canvas.getContext('2d', {willReadFrequently:true});
-const MAX_W = 960;           // processing width (larger = finds smaller/farther tags, slower)
 const tracks = new Map();    // id -> {x, y, n (consecutive frames), miss}
 let api = null, stream = null, facing = 'environment', gray = null, tagSizeM = 0.03;
 
@@ -66,12 +67,13 @@ $('fov').oninput = () => $('fovv').textContent = $('fov').value;
 $('marg').oninput = () => $('margv').textContent = $('marg').value;
 $('flip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCamera(); };
 $('go').onclick = startCamera;
+$('camres').onchange = startCamera;
 
 async function startCamera() {
   try {
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = await navigator.mediaDevices.getUserMedia({
-      video: {facingMode: facing, width: {ideal: 1280}, height: {ideal: 720}}, audio: false});
+      video: {facingMode: facing, width: {ideal: +$('camres').value.split('x')[0]}, height: {ideal: +$('camres').value.split('x')[1]}}, audio: false});
     video.srcObject = stream;
     await video.play();
     $('start').style.display = 'none';
@@ -92,7 +94,7 @@ let last = performance.now(), fps = 0;
 function loop() {
   requestAnimationFrame(loop);
   if (!api || !video.videoWidth) return;
-  const s = Math.min(1, MAX_W / video.videoWidth);
+  const s = Math.min(1, +$('procw').value / video.videoWidth);   // processing width: larger finds smaller/farther tags but is slower
   const w = Math.round(video.videoWidth * s), h = Math.round(video.videoHeight * s);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; gray = new Uint8Array(w * h); }
   ctx.drawImage(video, 0, 0, w, h);
@@ -168,7 +170,7 @@ function loop() {
   if ($('compact').checked) {
     const rng = (a, f = 0) => { a = a.filter(Number.isFinite); return a.length ? (Math.min(...a).toFixed(f) + '-' + Math.max(...a).toFixed(f)) : '-'; };
     const ids = okTags.map(o => o.id).sort((a, b) => a - b).join(',') || 'none';
-    $('hud').textContent = `IDs ${ids} | margin ${rng(okTags.map(o => o.margin))} | conf ${rng(okTags.map(o => o.conf))}% | dist ${rng(okTags.map(o => o.dist))} mm | rej ${nRej} | ${fps.toFixed(0)} fps`;
+    $('hud').textContent = `IDs ${ids} | margin ${rng(okTags.map(o => o.margin))} | conf ${rng(okTags.map(o => o.conf))}% | dist ${rng(okTags.map(o => o.dist))} mm | rej ${nRej} | ${w}x${h} ${fps.toFixed(0)} fps`;
   } else {
     $('hud').textContent = `${fps.toFixed(0)} fps  ${w}x${h}  confirmed: ${nOk}  rejected: ${nRej}\n` + lines.join('\n');
   }
