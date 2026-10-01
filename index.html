@@ -28,6 +28,7 @@
   <label><input id="exact" type="checkbox"> exact bits only</label>
   <label><input id="rej" type="checkbox" checked> show rejected</label>
   <label><input id="compact" type="checkbox" checked> compact text</label>
+  <label><input id="axes" type="checkbox" checked> axes</label>
   <button id="flip">Switch camera</button>
 </div>
 <div id="start"><div>AprilTag family tag16h5</div><button id="go">Start camera</button><div id="err" style="color:#f88;max-width:80%"></div></div>
@@ -140,6 +141,19 @@ function loop() {
     ctx.strokeStyle = col; ctx.beginPath();
     c.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); ctx.stroke();
     ctx.fillStyle = col; ctx.fillText(state === 'rej' ? 'x' + d.id : d.id, d.center.x - 8, d.center.y + 8);
+
+    // coordinate frame at the tag centre: x red (right), y green (down), z blue (into the tag); each axis = one tag size long.
+    // JSON "R" holds the matrix columns as rows, so R[j] is axis j expressed in camera coordinates.
+    if (state !== 'rej' && t && $('axes').checked) {
+      const proj = P => [f * P[0] / P[2] + w / 2, f * P[1] / P[2] + h / 2];
+      const o = proj(t);
+      ctx.lineWidth = Math.max(3, w / 220);
+      ['#f33', '#3f3', '#4af'].forEach((ac, j) => {
+        const e = proj([0, 1, 2].map(k => t[k] + tagSizeM * d.pose.R[j][k]));
+        ctx.strokeStyle = ac; ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+      });
+      ctx.lineWidth = Math.max(2, w / 320);
+    }
 
     // confidence 0-100%: decision margin (saturates at 60), x0.6 per corrected bit, ramps up over the confirm frames
     const conf = Math.round(Math.min(1, d.margin / 60) * Math.pow(0.6, d.hamming) * Math.min(1, frames / need) * 100);
