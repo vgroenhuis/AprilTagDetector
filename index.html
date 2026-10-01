@@ -27,6 +27,7 @@
   <label>Confirm frames <input id="conf" type="number" value="3" min="1" max="30" style="width:3em"></label>
   <label><input id="exact" type="checkbox"> exact bits only</label>
   <label><input id="rej" type="checkbox" checked> show rejected</label>
+  <label><input id="compact" type="checkbox" checked> compact text</label>
   <button id="flip">Switch camera</button>
 </div>
 <div id="start"><div>AprilTag family tag16h5</div><button id="go">Start camera</button><div id="err" style="color:#f88;max-width:80%"></div></div>
@@ -105,7 +106,7 @@ function loop() {
 
   ctx.lineWidth = Math.max(2, w / 320); ctx.font = `bold ${Math.round(w / 28)}px system-ui`;
   const minMargin = +$('marg').value, need = +$('conf').value || 1, exactOnly = $('exact').checked, showRej = $('rej').checked;
-  const lines = [], seen = new Set();
+  const lines = [], okTags = [], seen = new Set();
   let nOk = 0, nRej = 0;
   for (const d of dets) {
     const c = d.corners;
@@ -133,6 +134,7 @@ function loop() {
     }
     if (state === 'rej') { nRej++; if (!showRej) continue; }
     if (state === 'ok') nOk++;
+    const dist = t ? Math.hypot(...t) * 1000 : NaN;
 
     const col = state === 'ok' ? '#0f0' : state === 'pending' ? '#fd0' : '#f55';
     ctx.strokeStyle = col; ctx.beginPath();
@@ -141,13 +143,21 @@ function loop() {
 
     // confidence 0-100%: decision margin (saturates at 60), x0.6 per corrected bit, ramps up over the confirm frames
     const conf = Math.round(Math.min(1, d.margin / 60) * Math.pow(0.6, d.hamming) * Math.min(1, frames / need) * 100);
+    if (state === 'ok') okTags.push({id: d.id, margin: d.margin, conf, dist});
     lines.push(`${state === 'ok' ? 'OK ' : state === 'pending' ? '.. ' : 'XX '}id ${d.id}  conf ${conf}%  margin ${d.margin.toFixed(0)}  ham ${d.hamming}  n ${frames}` +
       (state === 'rej' ? `  (${why})` : t ? `  dist ${(Math.hypot(...t) * 1000).toFixed(0)} mm  xyz ${t.map(v => (v * 1000).toFixed(0)).join(', ')}` : ''));
   }
   for (const [id, tr] of tracks) if (!seen.has(id) && ++tr.miss > 3) tracks.delete(id);
 
   const now = performance.now(); fps = fps * 0.9 + 100 / (now - last); last = now;
-  $('hud').textContent = `${fps.toFixed(0)} fps  ${w}x${h}  confirmed: ${nOk}  rejected: ${nRej}\n` + lines.join('\n');
+  $('hud').style.whiteSpace = $('compact').checked ? 'pre-wrap' : 'pre';   // wrap rather than cut off on narrow screens
+  if ($('compact').checked) {
+    const rng = (a, f = 0) => { a = a.filter(Number.isFinite); return a.length ? (Math.min(...a).toFixed(f) + '-' + Math.max(...a).toFixed(f)) : '-'; };
+    const ids = okTags.map(o => o.id).sort((a, b) => a - b).join(',') || 'none';
+    $('hud').textContent = `IDs ${ids} | margin ${rng(okTags.map(o => o.margin))} | conf ${rng(okTags.map(o => o.conf))}% | dist ${rng(okTags.map(o => o.dist))} mm | rej ${nRej} | ${fps.toFixed(0)} fps`;
+  } else {
+    $('hud').textContent = `${fps.toFixed(0)} fps  ${w}x${h}  confirmed: ${nOk}  rejected: ${nRej}\n` + lines.join('\n');
+  }
 }
 loop();
 </script>
