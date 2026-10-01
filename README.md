@@ -18,4 +18,4 @@ then open http://localhost:8000 (opening `index.html` directly does not work).
 
 ## Build notes
 
-`apriltag_wasm.js/.wasm` is [arenaxr/apriltag-js-standalone](https://github.com/arenaxr/apriltag-js-standalone) (using [AprilRobotics/apriltag](https://github.com/AprilRobotics/apriltag)) compiled with emscripten for tag16h5, with the detection output extended by `hamming` and `margin`. The modified `src/apriltag_js.c` is `apriltag_js.patched.c`. Licences: see `LICENSE-apriltag-js-standalone` (BSD-style).
+`apriltag_wasm.js/.wasm` is [arenaxr/apriltag-js-standalone](https://github.com/arenaxr/apriltag-js-standalone) (using current upstream [AprilRobotics/apriltag](https://github.com/AprilRobotics/apriltag), AprilTag 3, master as of 2026-08-07, commit b7c0ebe) compiled with emscripten for tag16h5, with the detection output extended by `hamming` and `margin`. The modified `src/apriltag_js.c` is `apriltag_js.patched.c`. Licences: see `LICENSE-apriltag-js-standalone` (BSD-style).
