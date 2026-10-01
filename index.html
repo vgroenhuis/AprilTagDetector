@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AprilTag Detector</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#fff;font:14px system-ui,sans-serif}
+  #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  canvas{max-width:100%;max-height:100%}
+  #hud{position:fixed;left:0;right:0;top:0;padding:8px 12px;background:#000a;font-family:ui-monospace,monospace;white-space:pre;overflow:hidden}
+  #bar{position:fixed;left:0;right:0;bottom:0;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:#000a;display:flex;gap:8px 14px;align-items:center;flex-wrap:wrap}
+  #bar label{display:flex;gap:6px;align-items:center}
+  button{font:inherit;padding:6px 12px}
+  #start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;flex-direction:column;gap:12px}
+  #start button{font-size:20px;padding:14px 28px}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="out"></canvas></div>
+<video id="cam" playsinline muted style="display:none"></video>
+<div id="hud">Loading detector...</div>
+<div id="bar">
+  <label>Black square <input id="size" type="number" value="30" min="1" step="1" style="width:4.5em"> mm</label>
+  <label>Camera FOV <input id="fov" type="range" min="40" max="100" value="65"> <span id="fovv">65</span>&deg;</label>
+  <label>Min margin <input id="marg" type="range" min="0" max="100" value="25"> <span id="margv">25</span></label>
+  <label>Confirm frames <input id="conf" type="number" value="3" min="1" max="30" style="width:3em"></label>
+  <label><input id="exact" type="checkbox"> exact bits only</label>
+  <label><input id="rej" type="checkbox" checked> show rejected</label>
+  <button id="flip">Switch camera</button>
+</div>
+<div id="start"><div>AprilTag family tag16h5</div><button id="go">Start camera</button><div id="err" style="color:#f88;max-width:80%"></div></div>
+
+<script src="apriltag_wasm.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const video = $('cam'), canvas = $('out'), ctx = canvas.getContext('2d', {willReadFrequently:true});
+const MAX_W = 960;           // processing width (larger = finds smaller/farther tags, slower)
+const tracks = new Map();    // id -> {x, y, n (consecutive frames), miss}
+let api = null, stream = null, facing = 'environment', gray = null, tagSizeM = 0.03;
+
+AprilTagWasm().then(M => {
+  api = {
+    M,
+    init: M.cwrap('atagjs_init','number',[]),
+    opts: M.cwrap('atagjs_set_detector_options','number',Array(7).fill('number')),
+    pose: M.cwrap('atagjs_set_pose_info','number',Array(4).fill('number')),
+    buf: M.cwrap('atagjs_set_img_buffer','number',['number','number','number']),
+    size: M.cwrap('atagjs_set_tag_size',null,['number','number']),
+    detect: M.cwrap('atagjs_detect','number',[]),
+  };
+  api.init();
+  api.opts(2.0, 0.0, 1, 1, 0, 1, 0);   // decimate, sigma, threads, refine, maxdet, pose, solutions
+  applySize();
+  $('hud').textContent = 'Detector ready';
+});
+
+function applySize() {
+  tagSizeM = (parseFloat($('size').value) || 30) / 1000;
+  if (api) for (let i = 0; i < 587; i++) api.size(i, tagSizeM);
+}
+$('size').oninput = applySize;
+$('fov').oninput = () => $('fovv').textContent = $('fov').value;
+$('marg').oninput = () => $('margv').textContent = $('marg').value;
+$('flip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCamera(); };
+$('go').onclick = startCamera;
+
+async function startCamera() {
+  try {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {facingMode: facing, width: {ideal: 1280}, height: {ideal: 720}}, audio: false});
+    video.srcObject = stream;
+    await video.play();
+    $('start').style.display = 'none';
+  } catch (e) {
+    $('err').textContent = 'Camera error: ' + e.message + (location.protocol === 'http:' && location.hostname !== 'localhost' ? ' (camera needs HTTPS)' : '');
+  }
+}
+
+function readDetections() {
+  const p = api.detect();
+  const len = api.M.getValue(p, 'i32');
+  if (!len) return [];
+  const sp = api.M.getValue(p + 4, 'i32');
+  return JSON.parse(new TextDecoder().decode(new Uint8Array(api.M.HEAPU8.buffer, sp, len)));
+}
+
+let last = performance.now(), fps = 0;
+function loop() {
+  requestAnimationFrame(loop);
+  if (!api || !video.videoWidth) return;
+  const s = Math.min(1, MAX_W / video.videoWidth);
+  const w = Math.round(video.videoWidth * s), h = Math.round(video.videoHeight * s);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; gray = new Uint8Array(w * h); }
+  ctx.drawImage(video, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  for (let i = 0, j = 0; j < gray.length; i += 4, j++) gray[j] = (px[i] * 77 + px[i+1] * 150 + px[i+2] * 29) >> 8;
+
+  const f = (w / 2) / Math.tan($('fov').value * Math.PI / 360);   // focal length in px from assumed horizontal FOV
+  api.pose(f, f, w / 2, h / 2);
+  api.M.HEAPU8.set(gray, api.buf(w, h, w));
+  let dets = [];
+  try { dets = readDetections(); } catch (e) { console.error(e); }
+
+  ctx.lineWidth = Math.max(2, w / 320); ctx.font = `bold ${Math.round(w / 28)}px system-ui`;
+  const minMargin = +$('marg').value, need = +$('conf').value || 1, exactOnly = $('exact').checked, showRej = $('rej').checked;
+  const lines = [], seen = new Set();
+  let nOk = 0, nRej = 0;
+  for (const d of dets) {
+    const c = d.corners;
+    const sides = c.map((p, i) => Math.hypot(p.x - c[(i + 1) % 4].x, p.y - c[(i + 1) % 4].y));
+    const side = (sides[0] + sides[1] + sides[2] + sides[3]) / 4;
+    const t = d.pose && d.pose.t;
+
+    // static checks; the first one that fails is the rejection reason
+    let why = '';
+    if (d.id > 29) why = 'bad id';                                  // tag16h5 only has ids 0-29
+    else if (d.margin < minMargin) why = 'low margin';
+    else if (exactOnly && d.hamming > 0) why = 'bit errors';
+    else if (side < 12) why = 'too small';
+    else if (Math.min(...sides) / Math.max(...sides) < 0.3) why = 'not square';
+    else if (t && t[2] <= 0) why = 'behind camera';
+
+    // temporal check: same id at nearly the same place in consecutive frames
+    let frames = 0, state = 'rej';
+    if (!why) {
+      const tr = tracks.get(d.id);
+      frames = tr && Math.hypot(tr.x - d.center.x, tr.y - d.center.y) < side ? tr.n + 1 : 1;
+      tracks.set(d.id, {x: d.center.x, y: d.center.y, n: frames, miss: 0});
+      seen.add(d.id);
+      state = frames >= need ? 'ok' : 'pending';
+    }
+    if (state === 'rej') { nRej++; if (!showRej) continue; }
+    if (state === 'ok') nOk++;
+
+    const col = state === 'ok' ? '#0f0' : state === 'pending' ? '#fd0' : '#f55';
+    ctx.strokeStyle = col; ctx.beginPath();
+    c.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); ctx.stroke();
+    ctx.fillStyle = col; ctx.fillText(state === 'rej' ? 'x' + d.id : d.id, d.center.x - 8, d.center.y + 8);
+
+    // confidence 0-100%: decision margin (saturates at 60), x0.6 per corrected bit, ramps up over the confirm frames
+    const conf = Math.round(Math.min(1, d.margin / 60) * Math.pow(0.6, d.hamming) * Math.min(1, frames / need) * 100);
+    lines.push(`${state === 'ok' ? 'OK ' : state === 'pending' ? '.. ' : 'XX '}id ${d.id}  conf ${conf}%  margin ${d.margin.toFixed(0)}  ham ${d.hamming}  n ${frames}` +
+      (state === 'rej' ? `  (${why})` : t ? `  dist ${(Math.hypot(...t) * 1000).toFixed(0)} mm  xyz ${t.map(v => (v * 1000).toFixed(0)).join(', ')}` : ''));
+  }
+  for (const [id, tr] of tracks) if (!seen.has(id) && ++tr.miss > 3) tracks.delete(id);
+
+  const now = performance.now(); fps = fps * 0.9 + 100 / (now - last); last = now;
+  $('hud').textContent = `${fps.toFixed(0)} fps  ${w}x${h}  confirmed: ${nOk}  rejected: ${nRej}\n` + lines.join('\n');
+}
+loop();
+</script>
+</body>
+</html>
