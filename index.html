@@ -10,8 +10,12 @@
   /* Fill the window, keeping the camera's aspect ratio (letterboxed), also when resized or rotated. */
   canvas{display:block;width:100%;height:100%;object-fit:contain}
   #hud{position:fixed;left:0;right:0;top:0;padding:8px 12px;background:#000a;font-family:ui-monospace,monospace;white-space:pre;overflow:hidden}
-  #bar{position:fixed;left:0;right:0;bottom:0;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:#000a;display:flex;gap:8px 14px;align-items:center;flex-wrap:wrap}
+  #bar{position:fixed;left:0;right:0;bottom:0;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:#000a}
+  #bar .row,#panel{display:flex;gap:8px 14px;align-items:center;flex-wrap:wrap}
+  #panel{margin-top:8px}
+  #bar.collapsed #panel{display:none}
   #bar label{display:flex;gap:6px;align-items:center}
+  #bar label.off{opacity:.5}
   button{font:inherit;padding:6px 12px}
   #start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;flex-direction:column;gap:12px}
   #start button{font-size:20px;padding:14px 28px}
@@ -25,6 +29,11 @@
 <video id="cam" playsinline muted style="display:none"></video>
 <div id="hud">Loading detector...</div>
 <div id="bar">
+ <div class="row">
+  <button id="panelBtn" aria-expanded="true" aria-controls="panel">Settings &#9662;</button>
+  <label id="fsLabel"><input id="fs" type="checkbox"> fullscreen</label>
+ </div>
+ <div id="panel">
   <a class="home" href="https://vgroenhuis.github.io/">&larr; Vincent Groenhuis</a>
   <label>Black square <input id="size" type="number" value="30" min="1" step="1" style="width:4.5em"> mm</label>
   <label>Camera FOV <input id="fov" type="range" min="40" max="100" value="65"> <span id="fovv">65</span>&deg;</label>
@@ -37,6 +46,7 @@
   <label>Camera <select id="camres"><option value="640x480">640x480</option><option value="1280x720" selected>1280x720</option><option value="1920x1080">1920x1080</option></select></label>
   <label>Process width <select id="procw"><option>320</option><option>480</option><option selected>640</option><option>960</option><option>1280</option></select></label>
   <button id="flip">Switch camera</button>
+ </div>
 </div>
 <div id="start"><a class="home" href="https://vgroenhuis.github.io/">&larr; Vincent Groenhuis</a><div>AprilTag family tag16h5</div><button id="go">Start camera</button><div id="err" style="color:#f88;max-width:80%"></div></div>
 
@@ -73,6 +83,37 @@ $('marg').oninput = () => $('margv').textContent = $('marg').value;
 $('flip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCamera(); };
 $('go').onclick = startCamera;
 $('camres').onchange = startCamera;
+
+// Collapsible settings panel; remembered per device, collapsed by default on small screens.
+function setPanel(open) {
+  $('bar').classList.toggle('collapsed', !open);
+  $('panelBtn').setAttribute('aria-expanded', open);
+  $('panelBtn').innerHTML = open ? 'Settings &#9662;' : 'Settings &#9652;';
+  try { localStorage.setItem('panelOpen', open ? '1' : '0'); } catch (e) {}
+}
+let savedPanel = null;
+try { savedPanel = localStorage.getItem('panelOpen'); } catch (e) {}
+setPanel(savedPanel === null ? innerWidth >= 900 : savedPanel === '1');
+$('panelBtn').onclick = () => setPanel($('bar').classList.contains('collapsed'));
+
+// Fullscreen (not available on iPhone Safari; there, "Add to Home Screen" gives a full-screen view).
+const root = document.documentElement;
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) {
+  $('fs').disabled = true;
+  $('fsLabel').classList.add('off');
+  $('fsLabel').title = 'Fullscreen is not supported by this browser. On iPhone, use Share > Add to Home Screen.';
+}
+// The checkbox always follows the actual state, also when a request is refused or Esc/back exits fullscreen.
+const syncFs = () => { $('fs').checked = !!fsElement(); };
+$('fs').onchange = () => {
+  try {
+    if ($('fs').checked) (root.requestFullscreen ? root.requestFullscreen() : root.webkitRequestFullscreen())?.catch?.(syncFs);
+    else if (fsElement()) (document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen())?.catch?.(syncFs);
+  } catch (e) { console.warn(e); }
+  setTimeout(syncFs, 1000);
+};
+['fullscreenchange', 'webkitfullscreenchange', 'fullscreenerror', 'webkitfullscreenerror'].forEach(ev => document.addEventListener(ev, syncFs));
 
 async function startCamera() {
   try {

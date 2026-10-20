@@ -7,6 +7,7 @@ Browser-based live-camera detector for **tag16h5** AprilTags (ids 0-29), with po
 - Tags are 40 mm squares with a 30 mm black square and 5 mm white margin. Enter **30** (black square) as the tag size.
 - `tag16h5_cube_tags.pdf`: all 30 tags, print at 100% and cut on the grey lines. Regenerate with `make_tags_pdf.py`.
 - Distance depends on the assumed camera FOV (slider); calibrate by holding a tag at a known distance.
+- Tap *Settings* to show or hide the controls (collapsed by default on phones) and tick *fullscreen* to use the whole screen for the live view. iPhone Safari has no fullscreen mode; use *Share > Add to Home Screen* instead.
 - Robustness: decision margin, bit errors (hamming), geometry checks and multi-frame confirmation; tune with the sliders.
 
 ## Run locally
